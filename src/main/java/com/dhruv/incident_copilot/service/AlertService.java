@@ -15,9 +15,11 @@ import java.util.UUID;
 public class AlertService {
 
     private final AlertRepository alertRepository;
+    private final AlertIngestWriter alertIngestWriter;
 
-    public AlertService(AlertRepository alertRepository) {
+    public AlertService(AlertRepository alertRepository, AlertIngestWriter alertIngestWriter) {
         this.alertRepository = alertRepository;
+        this.alertIngestWriter = alertIngestWriter;
     }
 
     public AlertIngestResult ingest(AlertRequest request) {
@@ -27,15 +29,9 @@ public class AlertService {
             return new AlertIngestResult(AlertResponse.from(existing.get()), false);
         }
 
-        Alert alert = new Alert();
-        alert.setSourceSystem(request.sourceSystem());
-        alert.setExternalAlertId(request.externalAlertId());
-        alert.setSeverity(request.severity());
-        alert.setTitle(request.title());
-        alert.setRawPayload(request.rawPayload());
-
         try {
-            alertRepository.save(alert);
+            Alert alert = alertIngestWriter.insert(request);
+            return new AlertIngestResult(AlertResponse.from(alert), true);
         } catch (DataIntegrityViolationException e) {
             // lost a race against a concurrent duplicate delivery of the same alert
             Alert winner = alertRepository
@@ -43,8 +39,6 @@ public class AlertService {
                     .orElseThrow(() -> e);
             return new AlertIngestResult(AlertResponse.from(winner), false);
         }
-
-        return new AlertIngestResult(AlertResponse.from(alert), true);
     }
 
     public AlertResponse getById(UUID id) {

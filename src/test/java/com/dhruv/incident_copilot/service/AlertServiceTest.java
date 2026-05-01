@@ -18,7 +18,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -27,6 +26,9 @@ class AlertServiceTest {
     @Mock
     private AlertRepository alertRepository;
 
+    @Mock
+    private AlertIngestWriter alertIngestWriter;
+
     @InjectMocks
     private AlertService alertService;
 
@@ -34,27 +36,32 @@ class AlertServiceTest {
         return new AlertRequest("datadog", "ext-1", Severity.CRITICAL, "CPU high", "{}");
     }
 
+    private Alert alertEntity() {
+        Alert alert = new Alert();
+        alert.setId(UUID.randomUUID());
+        alert.setSourceSystem("datadog");
+        alert.setExternalAlertId("ext-1");
+        alert.setSeverity(Severity.CRITICAL);
+        alert.setTitle("CPU high");
+        alert.setRawPayload("{}");
+        return alert;
+    }
+
     @Test
     void ingestCreatesNewAlertWhenNoneExists() {
         when(alertRepository.findBySourceSystemAndExternalAlertId("datadog", "ext-1"))
                 .thenReturn(Optional.empty());
+        when(alertIngestWriter.insert(any(AlertRequest.class))).thenReturn(alertEntity());
 
         AlertIngestResult result = alertService.ingest(request());
 
         assertThat(result.created()).isTrue();
-        verify(alertRepository).save(any(Alert.class));
     }
 
     @Test
-    void ingestReturnsExistingAlertWithoutSavingWhenDuplicate() {
-        Alert existing = new Alert();
-        existing.setSourceSystem("datadog");
-        existing.setExternalAlertId("ext-1");
-        existing.setSeverity(Severity.CRITICAL);
-        existing.setTitle("CPU high");
-        existing.setRawPayload("{}");
+    void ingestReturnsExistingAlertWithoutInsertingWhenDuplicate() {
         when(alertRepository.findBySourceSystemAndExternalAlertId("datadog", "ext-1"))
-                .thenReturn(Optional.of(existing));
+                .thenReturn(Optional.of(alertEntity()));
 
         AlertIngestResult result = alertService.ingest(request());
 
@@ -64,17 +71,12 @@ class AlertServiceTest {
 
     @Test
     void ingestFallsBackToExistingRowOnConcurrentDuplicateInsert() {
-        Alert winner = new Alert();
-        winner.setSourceSystem("datadog");
-        winner.setExternalAlertId("ext-1");
-        winner.setSeverity(Severity.CRITICAL);
-        winner.setTitle("CPU high");
-        winner.setRawPayload("{}");
+        Alert winner = alertEntity();
 
         when(alertRepository.findBySourceSystemAndExternalAlertId("datadog", "ext-1"))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(winner));
-        when(alertRepository.save(any(Alert.class))).thenThrow(new DataIntegrityViolationException("dup"));
+        when(alertIngestWriter.insert(any(AlertRequest.class))).thenThrow(new DataIntegrityViolationException("dup"));
 
         AlertIngestResult result = alertService.ingest(request());
 
