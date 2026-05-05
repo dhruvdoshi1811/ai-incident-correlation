@@ -1,16 +1,21 @@
 package com.dhruv.incident_copilot;
 
-import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 
 @TestConfiguration
-public class TestEmbeddingConfig {
+public class TestAiConfig {
 
     @Bean
     @Primary
-    public EmbeddingModel embeddingModel() {
+    public FakeEmbeddingModel embeddingModel() {
         return new FakeEmbeddingModel();
+    }
+
+    @Bean
+    @Primary
+    public FakeChatModel chatModel() {
+        return new FakeChatModel();
     }
 }

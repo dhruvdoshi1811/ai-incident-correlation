@@ -30,7 +30,7 @@ public class CorrelationService {
         Alert alert = alertRepository.findById(alertId)
                 .orElseThrow(() -> new ResourceNotFoundException("Alert not found: " + alertId));
 
-        float[] embedding = embeddingService.embed(alert);
+        float[] embedding = embeddingService.embed(alert.getSourceSystem() + " " + alert.getTitle());
 
         for (int attempt = 1; attempt <= MAX_ATTACH_ATTEMPTS; attempt++) {
             try {

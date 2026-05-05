@@ -14,7 +14,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
@@ -45,7 +45,7 @@ class CorrelationServiceTest {
         UUID alertId = UUID.randomUUID();
         float[] embedding = new float[]{0.1f};
         when(alertRepository.findById(alertId)).thenReturn(Optional.of(alertWithId(alertId)));
-        when(embeddingService.embed(any(Alert.class))).thenReturn(embedding);
+        when(embeddingService.embed(anyString())).thenReturn(embedding);
         doNothing().when(correlationAttachmentService).decideAndAttach(alertId, embedding);
 
         correlationService.correlate(alertId);
@@ -58,7 +58,7 @@ class CorrelationServiceTest {
         UUID alertId = UUID.randomUUID();
         float[] embedding = new float[]{0.1f};
         when(alertRepository.findById(alertId)).thenReturn(Optional.of(alertWithId(alertId)));
-        when(embeddingService.embed(any(Alert.class))).thenReturn(embedding);
+        when(embeddingService.embed(anyString())).thenReturn(embedding);
         doThrow(new ObjectOptimisticLockingFailureException("Incident", alertId))
                 .doNothing()
                 .when(correlationAttachmentService).decideAndAttach(alertId, embedding);
@@ -73,7 +73,7 @@ class CorrelationServiceTest {
         UUID alertId = UUID.randomUUID();
         float[] embedding = new float[]{0.1f};
         when(alertRepository.findById(alertId)).thenReturn(Optional.of(alertWithId(alertId)));
-        when(embeddingService.embed(any(Alert.class))).thenReturn(embedding);
+        when(embeddingService.embed(anyString())).thenReturn(embedding);
         doThrow(new ObjectOptimisticLockingFailureException("Incident", alertId))
                 .when(correlationAttachmentService).decideAndAttach(alertId, embedding);
 
