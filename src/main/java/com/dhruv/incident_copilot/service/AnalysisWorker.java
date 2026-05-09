@@ -10,7 +10,6 @@ import com.dhruv.incident_copilot.repository.IncidentRepository;
 import com.dhruv.incident_copilot.repository.PostmortemEmbeddingRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -24,12 +23,19 @@ public class AnalysisWorker {
 
     private static final Logger log = LoggerFactory.getLogger(AnalysisWorker.class);
 
+    private static final String SYSTEM_PROMPT = """
+            You are an SRE incident-analysis assistant. Given a set of correlated
+            infrastructure alerts and, where available, relevant historical postmortems,
+            provide a concise likely root cause and recommended next steps for the
+            on-call engineer.
+            """;
+
     private final AnalysisRequestRepository analysisRequestRepository;
     private final IncidentRepository incidentRepository;
     private final AlertRepository alertRepository;
     private final EmbeddingService embeddingService;
     private final PostmortemEmbeddingRepository postmortemEmbeddingRepository;
-    private final ChatClient chatClient;
+    private final ProtectedChatClient protectedChatClient;
     private final int retrievalTopK;
 
     public AnalysisWorker(
@@ -38,14 +44,14 @@ public class AnalysisWorker {
             AlertRepository alertRepository,
             EmbeddingService embeddingService,
             PostmortemEmbeddingRepository postmortemEmbeddingRepository,
-            ChatClient.Builder chatClientBuilder,
+            ProtectedChatClient protectedChatClient,
             @Value("${postmortem.retrieval.top-k}") int retrievalTopK) {
         this.analysisRequestRepository = analysisRequestRepository;
         this.incidentRepository = incidentRepository;
         this.alertRepository = alertRepository;
         this.embeddingService = embeddingService;
         this.postmortemEmbeddingRepository = postmortemEmbeddingRepository;
-        this.chatClient = chatClientBuilder.build();
+        this.protectedChatClient = protectedChatClient;
         this.retrievalTopK = retrievalTopK;
     }
 
@@ -57,37 +63,36 @@ public class AnalysisWorker {
         request.setStatus(AnalysisStatus.RUNNING);
         analysisRequestRepository.save(request);
 
+        List<Alert> alerts;
         try {
             Incident incident = incidentRepository.findById(request.getIncidentId())
                     .orElseThrow(() -> new IllegalStateException("Incident disappeared: " + request.getIncidentId()));
-            List<Alert> alerts = alertRepository.findByIncidentId(incident.getId());
+            alerts = alertRepository.findByIncidentId(incident.getId());
+        } catch (Exception e) {
+            log.error("Analysis failed for request {} - could not load incident/alerts", requestId, e);
+            markTerminal(request, AnalysisStatus.FAILED, "Analysis failed: " + e.getMessage());
+            return;
+        }
 
+        try {
             String retrievalQuery = buildRetrievalQuery(alerts);
             float[] queryEmbedding = embeddingService.embed(retrievalQuery);
             List<PostmortemMatch> matches = postmortemEmbeddingRepository.findTopKSimilar(queryEmbedding, retrievalTopK);
 
-            String summary = chatClient.prompt()
-                    .system("""
-                            You are an SRE incident-analysis assistant. Given a set of correlated
-                            infrastructure alerts and, where available, relevant historical postmortems,
-                            provide a concise likely root cause and recommended next steps for the
-                            on-call engineer.
-                            """)
-                    .user(buildUserPrompt(alerts, matches))
-                    .call()
-                    .content();
+            String summary = protectedChatClient.call(SYSTEM_PROMPT, buildUserPrompt(alerts, matches));
 
-            request.setStatus(AnalysisStatus.COMPLETED);
-            request.setResultSummary(summary);
-            request.setCompletedAt(Instant.now());
-            analysisRequestRepository.save(request);
+            markTerminal(request, AnalysisStatus.COMPLETED, summary);
         } catch (Exception e) {
-            log.error("Analysis failed for request {}", requestId, e);
-            request.setStatus(AnalysisStatus.FAILED);
-            request.setResultSummary("Analysis failed: " + e.getMessage());
-            request.setCompletedAt(Instant.now());
-            analysisRequestRepository.save(request);
+            log.warn("Analysis degraded for request {}: {}", requestId, e.getMessage());
+            markTerminal(request, AnalysisStatus.DEGRADED, buildDegradedSummary(alerts));
         }
+    }
+
+    private void markTerminal(AnalysisRequest request, AnalysisStatus status, String summary) {
+        request.setStatus(status);
+        request.setResultSummary(summary);
+        request.setCompletedAt(Instant.now());
+        analysisRequestRepository.save(request);
     }
 
     private String buildRetrievalQuery(List<Alert> alerts) {
@@ -116,5 +121,15 @@ public class AnalysisWorker {
 
         prompt.append("\nProvide a likely root cause and recommended next steps.");
         return prompt.toString();
+    }
+
+    private String buildDegradedSummary(List<Alert> alerts) {
+        StringBuilder summary = new StringBuilder();
+        summary.append("AI analysis is temporarily unavailable. Showing raw correlated alerts for manual review:\n\n");
+        for (Alert alert : alerts) {
+            summary.append("- [%s] %s: %s%n"
+                    .formatted(alert.getSeverity(), alert.getSourceSystem(), alert.getTitle()));
+        }
+        return summary.toString();
     }
 }

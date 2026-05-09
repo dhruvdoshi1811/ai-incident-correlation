@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Service
@@ -58,6 +59,7 @@ public class CorrelationAttachmentService {
         Incident incident = incidentRepository.findById(incidentId)
                 .orElseThrow(() -> new IllegalStateException("Matched incident disappeared: " + incidentId));
         incident.setCorrelatedAlertCount(incident.getCorrelatedAlertCount() + 1);
+        incident.setLastAlertAttachedAt(Instant.now());
         incidentRepository.save(incident);
 
         alert.setIncidentId(incidentId);
@@ -67,6 +69,7 @@ public class CorrelationAttachmentService {
     private void createIncidentAndAttach(Alert alert) {
         Incident incident = new Incident();
         incident.setCorrelatedAlertCount(1);
+        incident.setLastAlertAttachedAt(Instant.now());
         incidentRepository.save(incident);
 
         alert.setIncidentId(incident.getId());

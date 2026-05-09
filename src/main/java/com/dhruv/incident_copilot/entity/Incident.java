@@ -47,6 +47,9 @@ public class Incident {
     @Column(name = "resolved_at")
     private Instant resolvedAt;
 
+    @Column(name = "last_alert_attached_at")
+    private Instant lastAlertAttachedAt;
+
     @PrePersist
     void onCreate() {
         if (createdAt == null) {
