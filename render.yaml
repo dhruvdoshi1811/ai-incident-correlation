@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: incident-copilot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: DATABASE_HOST
+        fromDatabase:
+          name: incident-copilot-db
+          property: host
+      - key: DATABASE_PORT
+        fromDatabase:
+          name: incident-copilot-db
+          property: port
+      - key: DATABASE_NAME
+        fromDatabase:
+          name: incident-copilot-db
+          property: database
+      - key: DATABASE_USER
+        fromDatabase:
+          name: incident-copilot-db
+          property: user
+      - key: DATABASE_PASSWORD
+        fromDatabase:
+          name: incident-copilot-db
+          property: password
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+
+databases:
+  - name: incident-copilot-db
+    plan: free
+    postgresMajorVersion: 16

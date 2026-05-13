@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: incident_copilot
+      POSTGRES_USER: incident_copilot
+      POSTGRES_PASSWORD: incident_copilot
+    ports:
+      - "5433:5432"
+    volumes:
+      - incident-copilot-full-pgdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    depends_on:
+      - postgres
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/incident_copilot
+      SPRING_DATASOURCE_USERNAME: incident_copilot
+      SPRING_DATASOURCE_PASSWORD: incident_copilot
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    ports:
+      - "8080:8080"
+
+volumes:
+  incident-copilot-full-pgdata:
