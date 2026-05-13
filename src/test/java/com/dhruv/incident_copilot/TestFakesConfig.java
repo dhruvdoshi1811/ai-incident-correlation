@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 
 @TestConfiguration
-public class TestAiConfig {
+public class TestFakesConfig {
 
     @Bean
     @Primary
@@ -17,5 +17,11 @@ public class TestAiConfig {
     @Primary
     public FakeChatModel chatModel() {
         return new FakeChatModel();
+    }
+
+    @Bean
+    @Primary
+    public FakeNotificationSender notificationSender() {
+        return new FakeNotificationSender();
     }
 }

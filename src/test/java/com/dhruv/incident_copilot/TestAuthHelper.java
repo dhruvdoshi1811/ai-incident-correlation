@@ -25,6 +25,19 @@ public final class TestAuthHelper {
         return objectMapper.readTree(response).get("token").asText();
     }
 
+    public static String loginAndGetToken(MockMvc mockMvc, ObjectMapper objectMapper, String email, String password)
+            throws Exception {
+        String body = objectMapper.writeValueAsString(new RegisterPayload(email, password));
+
+        String response = mockMvc.perform(post("/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        return objectMapper.readTree(response).get("token").asText();
+    }
+
     private record RegisterPayload(String email, String password) {
     }
 }

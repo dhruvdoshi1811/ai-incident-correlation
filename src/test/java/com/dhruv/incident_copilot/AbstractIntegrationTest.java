@@ -7,7 +7,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Import(TestAiConfig.class)
+@Import(TestFakesConfig.class)
 public abstract class AbstractIntegrationTest {
 
     @ServiceConnection

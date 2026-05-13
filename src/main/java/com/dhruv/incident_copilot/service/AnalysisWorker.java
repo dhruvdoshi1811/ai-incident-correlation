@@ -14,7 +14,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -36,6 +35,7 @@ public class AnalysisWorker {
     private final EmbeddingService embeddingService;
     private final PostmortemEmbeddingRepository postmortemEmbeddingRepository;
     private final ProtectedChatClient protectedChatClient;
+    private final AnalysisCompletionService analysisCompletionService;
     private final int retrievalTopK;
 
     public AnalysisWorker(
@@ -45,6 +45,7 @@ public class AnalysisWorker {
             EmbeddingService embeddingService,
             PostmortemEmbeddingRepository postmortemEmbeddingRepository,
             ProtectedChatClient protectedChatClient,
+            AnalysisCompletionService analysisCompletionService,
             @Value("${postmortem.retrieval.top-k}") int retrievalTopK) {
         this.analysisRequestRepository = analysisRequestRepository;
         this.incidentRepository = incidentRepository;
@@ -52,6 +53,7 @@ public class AnalysisWorker {
         this.embeddingService = embeddingService;
         this.postmortemEmbeddingRepository = postmortemEmbeddingRepository;
         this.protectedChatClient = protectedChatClient;
+        this.analysisCompletionService = analysisCompletionService;
         this.retrievalTopK = retrievalTopK;
     }
 
@@ -70,7 +72,7 @@ public class AnalysisWorker {
             alerts = alertRepository.findByIncidentId(incident.getId());
         } catch (Exception e) {
             log.error("Analysis failed for request {} - could not load incident/alerts", requestId, e);
-            markTerminal(request, AnalysisStatus.FAILED, "Analysis failed: " + e.getMessage());
+            analysisCompletionService.complete(requestId, AnalysisStatus.FAILED, "Analysis failed: " + e.getMessage());
             return;
         }
 
@@ -81,18 +83,11 @@ public class AnalysisWorker {
 
             String summary = protectedChatClient.call(SYSTEM_PROMPT, buildUserPrompt(alerts, matches));
 
-            markTerminal(request, AnalysisStatus.COMPLETED, summary);
+            analysisCompletionService.complete(requestId, AnalysisStatus.COMPLETED, summary);
         } catch (Exception e) {
             log.warn("Analysis degraded for request {}: {}", requestId, e.getMessage());
-            markTerminal(request, AnalysisStatus.DEGRADED, buildDegradedSummary(alerts));
+            analysisCompletionService.complete(requestId, AnalysisStatus.DEGRADED, buildDegradedSummary(alerts));
         }
-    }
-
-    private void markTerminal(AnalysisRequest request, AnalysisStatus status, String summary) {
-        request.setStatus(status);
-        request.setResultSummary(summary);
-        request.setCompletedAt(Instant.now());
-        analysisRequestRepository.save(request);
     }
 
     private String buildRetrievalQuery(List<Alert> alerts) {
