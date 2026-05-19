@@ -72,21 +72,31 @@ public class AnalysisWorker {
             alerts = alertRepository.findByIncidentId(incident.getId());
         } catch (Exception e) {
             log.error("Analysis failed for request {} - could not load incident/alerts", requestId, e);
-            analysisCompletionService.complete(requestId, AnalysisStatus.FAILED, "Analysis failed: " + e.getMessage());
+            analysisCompletionService.complete(requestId, AnalysisStatus.FAILED, "Analysis failed: " + e.getMessage(), null);
             return;
         }
 
+        List<PostmortemMatch> matches;
+        String retrievedContext;
         try {
             String retrievalQuery = buildRetrievalQuery(alerts);
             float[] queryEmbedding = embeddingService.embed(retrievalQuery);
-            List<PostmortemMatch> matches = postmortemEmbeddingRepository.findTopKSimilar(queryEmbedding, retrievalTopK);
+            matches = postmortemEmbeddingRepository.findTopKSimilar(queryEmbedding, retrievalTopK);
+            retrievedContext = matches.isEmpty()
+                    ? null
+                    : matches.stream().map(PostmortemMatch::title).collect(java.util.stream.Collectors.joining(" | "));
+        } catch (Exception e) {
+            log.warn("Postmortem retrieval failed for request {}: {}", requestId, e.getMessage());
+            matches = List.of();
+            retrievedContext = null;
+        }
 
+        try {
             String summary = protectedChatClient.call(SYSTEM_PROMPT, buildUserPrompt(alerts, matches));
-
-            analysisCompletionService.complete(requestId, AnalysisStatus.COMPLETED, summary);
+            analysisCompletionService.complete(requestId, AnalysisStatus.COMPLETED, summary, retrievedContext);
         } catch (Exception e) {
             log.warn("Analysis degraded for request {}: {}", requestId, e.getMessage());
-            analysisCompletionService.complete(requestId, AnalysisStatus.DEGRADED, buildDegradedSummary(alerts));
+            analysisCompletionService.complete(requestId, AnalysisStatus.DEGRADED, buildDegradedSummary(alerts), retrievedContext);
         }
     }
 

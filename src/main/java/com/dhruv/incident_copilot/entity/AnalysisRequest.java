@@ -43,6 +43,9 @@ public class AnalysisRequest {
     @Column(name = "result_summary", columnDefinition = "TEXT")
     private String resultSummary;
 
+    @Column(name = "retrieved_postmortem_titles", columnDefinition = "TEXT")
+    private String retrievedPostmortemTitles;
+
     @PrePersist
     void onCreate() {
         if (requestedAt == null) {

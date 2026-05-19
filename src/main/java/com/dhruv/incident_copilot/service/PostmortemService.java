@@ -29,6 +29,7 @@ public class PostmortemService {
         Postmortem postmortem = new Postmortem();
         postmortem.setTitle(request.title());
         postmortem.setContent(request.content());
+        postmortem.setSourceIncidentId(request.sourceIncidentId());
         postmortemRepository.save(postmortem);
 
         float[] embedding = embeddingService.embed(request.title() + " " + request.content());

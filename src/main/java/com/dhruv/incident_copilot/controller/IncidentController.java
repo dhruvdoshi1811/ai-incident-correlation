@@ -1,11 +1,14 @@
 package com.dhruv.incident_copilot.controller;
 
 import com.dhruv.incident_copilot.dto.AlertResponse;
+import com.dhruv.incident_copilot.dto.IncidentResolveRequest;
 import com.dhruv.incident_copilot.dto.IncidentResponse;
 import com.dhruv.incident_copilot.service.IncidentService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -38,7 +41,7 @@ public class IncidentController {
     }
 
     @PostMapping("/{id}/resolve")
-    public IncidentResponse resolve(@PathVariable UUID id) {
-        return incidentService.resolve(id);
+    public IncidentResponse resolve(@PathVariable UUID id, @Valid @RequestBody IncidentResolveRequest request) {
+        return incidentService.resolve(id, request);
     }
 }

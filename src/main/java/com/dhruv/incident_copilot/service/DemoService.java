@@ -2,7 +2,6 @@ package com.dhruv.incident_copilot.service;
 
 import com.dhruv.incident_copilot.dto.AlertRequest;
 import com.dhruv.incident_copilot.dto.AlertStormResult;
-import com.dhruv.incident_copilot.entity.Severity;
 import com.dhruv.incident_copilot.repository.AlertRepository;
 import org.springframework.stereotype.Service;
 
@@ -32,8 +31,9 @@ public class DemoService {
         this.alertRepository = alertRepository;
     }
 
-    public AlertStormResult simulateAlertStorm(int alertCount) {
+    public AlertStormResult simulateAlertStorm(IncidentScenario scenario, int alertCount) {
         String stormId = UUID.randomUUID().toString().substring(0, 8);
+        List<IncidentScenario.AlertTemplate> templates = scenario.alertTemplates();
         CountDownLatch startingGate = new CountDownLatch(1);
         CountDownLatch completionGate = new CountDownLatch(alertCount);
         ExecutorService executor = Executors.newFixedThreadPool(Math.min(alertCount, 20));
@@ -42,12 +42,13 @@ public class DemoService {
         IntStream.range(0, alertCount).forEach(i -> executor.submit(() -> {
             try {
                 startingGate.await();
+                IncidentScenario.AlertTemplate template = templates.get(i % templates.size());
                 AlertRequest request = new AlertRequest(
-                        "datadog",
+                        template.sourceSystem(),
                         "storm-" + stormId + "-" + i,
-                        Severity.CRITICAL,
-                        "High CPU usage detected on production host",
-                        "{\"cpu\":98,\"host\":\"host-" + i + "\"}");
+                        template.severity(),
+                        template.title(),
+                        "{\"scenario\":\"" + scenario.name() + "\",\"index\":" + i + "}");
                 var result = alertService.ingest(request);
                 alertIds.add(result.alert().id());
             } catch (InterruptedException e) {

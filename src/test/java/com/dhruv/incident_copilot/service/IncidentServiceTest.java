@@ -1,5 +1,8 @@
 package com.dhruv.incident_copilot.service;
 
+import com.dhruv.incident_copilot.dto.ImpactLevel;
+import com.dhruv.incident_copilot.dto.IncidentResolveRequest;
+import com.dhruv.incident_copilot.dto.PostmortemCategory;
 import com.dhruv.incident_copilot.entity.Incident;
 import com.dhruv.incident_copilot.entity.IncidentStatus;
 import com.dhruv.incident_copilot.exception.InvalidRequestException;
@@ -28,8 +31,22 @@ class IncidentServiceTest {
     @Mock
     private AlertRepository alertRepository;
 
+    @Mock
+    private PostmortemService postmortemService;
+
     @InjectMocks
     private IncidentService incidentService;
+
+    private IncidentResolveRequest sampleResolveRequest() {
+        return new IncidentResolveRequest(
+                "Query timeout postmortem",
+                PostmortemCategory.INFRASTRUCTURE,
+                ImpactLevel.HIGH,
+                "Checkout errors spiked",
+                "Slow query held connections open",
+                "Added index and increased pool size",
+                "Added slow-query alert");
+    }
 
     @Test
     void getByIdThrowsWhenMissing() {
@@ -47,10 +64,11 @@ class IncidentServiceTest {
         incident.setId(id);
         when(incidentRepository.findById(id)).thenReturn(Optional.of(incident));
 
-        var response = incidentService.resolve(id);
+        var response = incidentService.resolve(id, sampleResolveRequest());
 
         assertThat(response.status()).isEqualTo(IncidentStatus.RESOLVED);
         assertThat(response.resolvedAt()).isNotNull();
+        assertThat(response.rootCauseSummary()).contains("Slow query held connections open");
     }
 
     @Test
@@ -61,7 +79,7 @@ class IncidentServiceTest {
         incident.setStatus(IncidentStatus.RESOLVED);
         when(incidentRepository.findById(id)).thenReturn(Optional.of(incident));
 
-        assertThatThrownBy(() -> incidentService.resolve(id))
+        assertThatThrownBy(() -> incidentService.resolve(id, sampleResolveRequest()))
                 .isInstanceOf(InvalidRequestException.class);
     }
 }

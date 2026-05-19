@@ -28,4 +28,7 @@ public class Postmortem {
 
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
+
+    @Column(name = "source_incident_id")
+    private UUID sourceIncidentId;
 }

@@ -61,6 +61,7 @@ class AnalysisIntegrationTest extends AbstractIntegrationTest {
         AnalysisResponse completed = analysisService.getById(submitted.id());
         assertThat(completed.resultSummary()).isEqualTo("Root cause: connection pool exhaustion. Increase pool size.");
         assertThat(completed.completedAt()).isNotNull();
+        assertThat(completed.retrievedContext()).contains("DB connection pool exhaustion postmortem");
 
         assertThat(fakeChatModel.getLastPromptText())
                 .contains("Database connection errors spiking")

@@ -12,7 +12,8 @@ public record AnalysisResponse(
         AnalysisStatus status,
         Instant requestedAt,
         Instant completedAt,
-        String resultSummary
+        String resultSummary,
+        String retrievedContext
 ) {
     public static AnalysisResponse from(AnalysisRequest request) {
         return new AnalysisResponse(
@@ -21,7 +22,8 @@ public record AnalysisResponse(
                 request.getStatus(),
                 request.getRequestedAt(),
                 request.getCompletedAt(),
-                request.getResultSummary()
+                request.getResultSummary(),
+                request.getRetrievedPostmortemTitles()
         );
     }
 }

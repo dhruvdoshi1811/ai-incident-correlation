@@ -2,6 +2,9 @@ package com.dhruv.incident_copilot.controller;
 
 import com.dhruv.incident_copilot.AbstractIntegrationTest;
 import com.dhruv.incident_copilot.TestAuthHelper;
+import com.dhruv.incident_copilot.dto.ImpactLevel;
+import com.dhruv.incident_copilot.dto.IncidentResolveRequest;
+import com.dhruv.incident_copilot.dto.PostmortemCategory;
 import com.dhruv.incident_copilot.entity.Alert;
 import com.dhruv.incident_copilot.entity.Incident;
 import com.dhruv.incident_copilot.entity.Severity;
@@ -10,6 +13,7 @@ import com.dhruv.incident_copilot.repository.IncidentRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
@@ -78,17 +82,36 @@ class IncidentControllerTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$[0].id").value(alert.getId().toString()));
     }
 
+    private IncidentResolveRequest sampleResolveRequest() {
+        return new IncidentResolveRequest(
+                "Query timeout postmortem",
+                PostmortemCategory.INFRASTRUCTURE,
+                ImpactLevel.HIGH,
+                "Checkout errors spiked",
+                "Slow query held connections open",
+                "Added index and increased pool size",
+                "Added slow-query alert");
+    }
+
     @Test
     void resolveMarksIncidentResolved() throws Exception {
         Incident incident = seedIncident();
         String auth = authHeader();
+        String body = objectMapper.writeValueAsString(sampleResolveRequest());
 
-        mockMvc.perform(post("/incidents/" + incident.getId() + "/resolve").header("Authorization", auth))
+        mockMvc.perform(post("/incidents/" + incident.getId() + "/resolve")
+                        .header("Authorization", auth)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("RESOLVED"))
-                .andExpect(jsonPath("$.resolvedAt").exists());
+                .andExpect(jsonPath("$.resolvedAt").exists())
+                .andExpect(jsonPath("$.rootCauseSummary").value(org.hamcrest.Matchers.containsString("Slow query held connections open")));
 
-        mockMvc.perform(post("/incidents/" + incident.getId() + "/resolve").header("Authorization", auth))
+        mockMvc.perform(post("/incidents/" + incident.getId() + "/resolve")
+                        .header("Authorization", auth)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
                 .andExpect(status().isBadRequest());
     }
 }

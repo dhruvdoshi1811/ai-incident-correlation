@@ -37,11 +37,17 @@ public class AnalysisCompletionService {
 
     @Transactional
     public void complete(UUID requestId, AnalysisStatus status, String summary) {
+        complete(requestId, status, summary, null);
+    }
+
+    @Transactional
+    public void complete(UUID requestId, AnalysisStatus status, String summary, String retrievedContext) {
         AnalysisRequest request = analysisRequestRepository.findById(requestId)
                 .orElseThrow(() -> new IllegalStateException("Analysis request disappeared: " + requestId));
 
         request.setStatus(status);
         request.setResultSummary(summary);
+        request.setRetrievedPostmortemTitles(retrievedContext);
         request.setCompletedAt(Instant.now());
         analysisRequestRepository.save(request);
 
