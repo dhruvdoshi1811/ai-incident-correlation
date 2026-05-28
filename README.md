@@ -5,19 +5,33 @@ An SRE incident-management backend, with a small React dashboard on top. Raw mon
 The project exists to work through problems that are genuinely hard, not just CRUD with an LLM call bolted on:
 
 1. Deciding, under real concurrency, whether an incoming alert belongs to an already-open incident or needs to start a new one. Two alerts landing at the same instant must not both decide "there's no existing incident" and each create their own.
-2. Treating an external LLM as something that will actually fail sometimes, not an afterthought. It can time out, get rate-limited, or just be down, and the system has to fall back to something an on-call engineer can still use instead of blocking or crashing.
-3. Making the RAG part of the "AI" actually checkable instead of trusted on faith. You should be able to see, per analysis, which historical postmortem (if any) the model was actually grounded in.
+2. Treating an external LLM as something that will fail sometimes, not an afterthought. It can time out, get rate-limited, or just be down, and the system has to fall back to something an on-call engineer can still use instead of blocking or crashing.
+3. Making the RAG part of the "AI" checkable instead of trusted on faith. You should be able to see, per analysis, which historical postmortem (if any) the model was grounded in.
 4. Delivering a notification about the outcome reliably, even though "analysis finished" and "notification sent" happen in different transactions, and the second one talks to an external system that can fail on its own.
 
-## What it actually does
+## What it does
 
-An ops engineer picks one of four seeded incident scenarios (a database connection pool exhaustion, a memory leak, an auth token rotation gone wrong, a payment gateway outage) and fires a burst of alerts for it. It's not one repeated line. Each scenario cycles through three differently worded symptoms, the way a real outage actually looks scrolling down a monitoring dashboard. Those alerts get embedded and correlated into one or more incidents in the background.
+An ops engineer picks one of four seeded incident scenarios (a database connection pool exhaustion, a memory leak, an auth token rotation gone wrong, a payment gateway outage) and fires a burst of alerts for it. It's not one repeated line. Each scenario cycles through three differently worded symptoms, the way a real outage looks scrolling down a monitoring dashboard. Those alerts get embedded and correlated into one or more incidents in the background.
 
-An on-call engineer opens the resulting incident, looks at the raw correlated alerts, and clicks Analyze. The backend embeds a summary of those alerts, runs a similarity search against every stored postmortem (both the seeded ones and ones written by resolving earlier incidents), and hands the closest matches to Gemini along with the alerts as context. What comes back is a likely root cause and concrete next steps. The UI also shows exactly which historical postmortem titles were pulled in for that specific analysis, so you can actually check the model isn't just making something up.
+An on-call engineer opens the resulting incident, looks at the raw correlated alerts, and clicks Analyze. The backend embeds a summary of those alerts, runs a similarity search against every stored postmortem (both the seeded ones and ones written by resolving earlier incidents), and hands the closest matches to Gemini along with the alerts as context. What comes back is a likely root cause and concrete next steps. The UI also shows exactly which historical postmortem titles were pulled in for that specific analysis, so you can check the model isn't just making something up.
 
 If Gemini is down, rate-limited, or times out, the analysis still finishes. It falls back to a result built directly from the raw correlated alerts, so the on-call engineer is never stuck staring at a spinner or an error page. Either way, a notification gets queued and delivered, and retried with backoff if delivery itself fails.
 
-When the engineer resolves the incident, they fill in a short structured postmortem: root cause category, impact, what happened, root cause detail, resolution steps, follow-up actions. That write-up gets embedded and stored the exact same way a seeded postmortem does. It isn't just a record for later. It becomes context the system can pull from the next time a similar incident happens. That's the actual point of the whole project: the answers get more specific as more incidents get resolved through it, without retraining anything.
+When the engineer resolves the incident, they fill in a short structured postmortem: root cause category, impact, what happened, root cause detail, resolution steps, follow-up actions. That write-up gets embedded and stored the exact same way a seeded postmortem does. It isn't just a record for later. It becomes context the system can pull from the next time a similar incident happens. That's the point of the whole project: the answers get more specific as more incidents get resolved through it, without retraining anything.
+
+```mermaid
+flowchart LR
+    A[Ops triggers a scenario] --> B[Alerts fired]
+    B --> C[Alerts embedded and correlated]
+    C --> D[Incident created]
+    D --> E[On-call analyzes]
+    E --> F[Root cause + retrieved context shown]
+    F --> G[Notification queued and sent]
+    D --> H[On-call resolves]
+    H --> I[Postmortem written]
+    I --> J[Embedded into the knowledge base]
+    J -. feeds future analyses .-> E
+```
 
 ## Architecture
 
@@ -39,43 +53,42 @@ One exception to "just use JPA": vector embeddings never show up as a field on `
 | `Alert` | One raw monitoring alert: source system, severity, title, raw payload. Embedded and correlated into an incident on ingest. |
 | `Incident` | A correlated group of alerts. Tracks status (`OPEN` / `INVESTIGATING` / `RESOLVED`), correlated alert count, and, once resolved, the root cause summary written at resolution time. |
 | `Postmortem` | A write-up, either seeded ahead of time or written when resolving an incident (`sourceIncidentId` records which). Embedded and retrievable by every future analysis. |
-| `AnalysisRequest` | One request to analyze an incident. Tracks status (`PENDING → RUNNING → COMPLETED` / `DEGRADED` / `FAILED`), the result summary, and which postmortem titles were actually retrieved and used. |
+| `AnalysisRequest` | One request to analyze an incident. Tracks status (`PENDING → RUNNING → COMPLETED` / `DEGRADED` / `FAILED`), the result summary, and which postmortem titles were retrieved and used. |
 | `LlmUsageLog` | One row per attempted LLM call, whatever the outcome (`SUCCESS`, `CIRCUIT_OPEN`, `RATE_LIMITED`, `TIMEOUT`, `ERROR`). This is what the ops console's usage log is reading. |
 | `OutboundNotification` | One notification queued after an analysis completes. Delivered asynchronously outside the analysis transaction, retried with backoff on failure. |
 
-## How the AI actually works
+## How the AI works
 
-### Correlating alerts into incidents
+Two separate flows: correlating alerts as they come in, and analyzing an incident once it exists.
 
-Every alert gets embedded, using Gemini's embedding model truncated to 768 dimensions, the moment it's ingested. A nearest-neighbor search then finds the closest currently open incident by cosine distance. If that distance is under a threshold (`correlation.similarity-threshold`, `0.15` by default), the alert attaches to that incident. Otherwise it starts a new one.
+```mermaid
+flowchart TD
+    subgraph Correlation
+        A1[New alert] --> A2[Embed alert text]
+        A2 --> A3[Advisory lock + nearest-incident search]
+        A3 --> A4{Close enough?}
+        A4 -->|yes| A5[Attach to existing incident]
+        A4 -->|no| A6[Create new incident]
+    end
 
-The hard part isn't the similarity search, it's the concurrency. An alert storm fires many alerts at once, and two alerts that should both genuinely create a new incident (because there's nothing to correlate against yet) must not both check "is there an existing incident," get "no" as the answer, and each create their own. A Postgres advisory lock (`pg_advisory_xact_lock`) serializes that decide-and-attach step for the length of one transaction, so only one alert at a time gets to check and act. `@Version` optimistic locking is also used, but for a different problem: it catches two alerts updating the same existing incident row at once, not the decision of whether to create one in the first place.
+    subgraph Analysis
+        B1[Analyze requested] --> B2[Embed alert summary]
+        B2 --> B3[Find top-K similar postmortems]
+        B3 --> B4[Build prompt: alerts + retrieved postmortems]
+        B4 --> B5[Circuit breaker + rate limiter + timeout]
+        B5 -->|call succeeds| B6[COMPLETED: root cause + retrieved context]
+        B5 -->|call fails| B7[DEGRADED: raw alerts fallback]
+        B6 --> B8[Notification queued]
+        B7 --> B8
+    end
+```
 
-### Grounding the answer, and proving it
+A few notes on why it's built this way:
 
-When an analysis runs, the backend doesn't just hand the alerts to Gemini and hope for a good answer. It builds a retrieval query from the alerts, embeds it, and finds the top 3 nearest postmortems by cosine similarity (`postmortem.retrieval.top-k`). Seeded postmortems and ones written from past resolutions are treated the same way. Those matches get pasted directly into the prompt as "potentially relevant historical postmortems" before asking for a root cause.
-
-The part that makes this trustworthy, not just a leap of faith: every analysis records which postmortem titles were actually retrieved for it (`AnalysisRequest.retrievedPostmortemTitles`), shown in the UI as "Retrieved context." Fire the same scenario twice, resolving the first incident in between, and the second analysis will actually cite the postmortem written from the first resolution. The retrieved-context field confirms it isn't a coincidence. The model was handed that specific text.
-
-### Treating the LLM as unreliable, because it is
-
-Every call to Gemini's chat model goes through a circuit breaker and a rate limiter, wired up as functional decorators (`CircuitBreaker.decorateSupplier`, `RateLimiter.decorateSupplier`) rather than the `@CircuitBreaker` / `@RateLimiter` annotations. That's on purpose. Spring AOP only intercepts an annotated method when the call arrives through the proxy, meaning from a different bean. Call it from within the same class and the annotation is silently ignored. Decorating a supplier by hand avoids that trap and makes the protection explicit at the call site instead of something that can quietly stop working. A timeout is enforced the same way, using a bounded `CompletableFuture.get(timeout, unit)` rather than `@TimeLimiter`, which needs an async return type this call doesn't have.
-
-Every attempt, successful or not, gets exactly one `LlmUsageLog` row. That's what the ops console's usage log and outcome counts are actually reading, not a guess.
-
-If the call fails for any reason, the analysis doesn't fail outright. It completes as `DEGRADED`, with a result built directly from the raw correlated alerts, so the on-call engineer always has something usable instead of an error page. `FAILED` is reserved for a narrower case: the incident or its alerts couldn't even be loaded, before an LLM call was ever attempted.
-
-### Debounce without an in-memory timer
-
-Analysis doesn't have to be requested by hand. A scheduled sweep (`AnalysisDebounceScheduler`) checks periodically, every 10 seconds by default, for incidents that have gone quiet (no new alert attached in the last 30 seconds) and auto-submits analysis for them. That's a deliberate choice over a per-incident in-memory timer. A persisted, periodic sweep survives an app restart with no cancel or reschedule bookkeeping to get wrong. The tradeoff is that it only checks on a fixed interval instead of the exact instant an incident goes quiet.
-
-### Notifications outside the transaction that decided them
-
-Analysis completion and notification delivery are two separate transactions, on purpose. When an analysis finishes, `AnalysisCompletionService` writes the result and a `PENDING` `OutboundNotification` row in the same transaction, so the notification can never be silently lost even if the process dies right after. A separate scheduled job (`NotificationPublisher`) sends it later, outside any transaction, since it's talking to an external webhook that can be slow or down. On failure it retries with real exponential backoff instead of immediately, and gives up to a terminal `FAILED` state, retryable by hand from the ops console, once it runs out of attempts.
-
-### The loop closes at resolution
-
-Resolving an incident isn't just a status flip. The on-call engineer fills in a structured write-up (root cause category, impact, and four free-text narrative fields) which gets assembled into postmortem content and saved through the exact same path a seeded postmortem goes through: embedded, stored, and immediately retrievable, with `sourceIncidentId` recording where it came from. This is the actual mechanism behind "the system gets smarter over time." Nothing about the model itself changes. The corpus it retrieves from grows by one real, specific incident every time someone resolves one through the app.
+- The advisory lock exists because an alert storm fires many alerts at once, and two alerts that should both start a new incident must not both check "does one exist yet," get "no," and each create their own.
+- The circuit breaker and rate limiter are wired up as functional decorators (`CircuitBreaker.decorateSupplier`, `RateLimiter.decorateSupplier`), not the `@CircuitBreaker` / `@RateLimiter` annotations, because those annotations only work when the call comes through a Spring proxy. Calling the method from within the same class would silently skip the protection.
+- `DEGRADED` exists so the on-call engineer never sees a spinner or an error page when Gemini is down. `FAILED` only happens if the incident's own data couldn't be loaded, before any LLM call was attempted.
+- Resolving an incident writes a new postmortem through the same path a seeded one uses, which is what feeds the "future analyses" arrow in the diagram above.
 
 ## API
 
@@ -137,7 +150,7 @@ Talks to `http://localhost:8080` by default. CORS is already configured for `htt
 docker compose -f docker-compose.full.yml up --build
 ```
 
-Builds the app image and runs it alongside Postgres, matching what actually deploys to Render. Useful for confirming the Docker image works before pushing anything live.
+Builds the app image and runs it alongside Postgres, matching what deploys to Render. Useful for confirming the Docker image works before pushing anything live.
 
 ## Tests
 
@@ -145,6 +158,6 @@ Builds the app image and runs it alongside Postgres, matching what actually depl
 mvnw test
 ```
 
-Every external dependency (the embedding model, the chat model, the notification sender) is faked (`FakeEmbeddingModel`, `FakeChatModel`, `FakeNotificationSender`), so the suite runs with zero real API calls and no cost. Integration tests run against a real Postgres via Testcontainers, not an in-memory substitute, so the pgvector-specific SQL actually gets exercised. Covers the correlation logic under real concurrency, the full lifecycle from alert to resolved postmortem end to end, the circuit breaker actually opening and closing under repeated failures, and the notification outbox surviving a mid-flight crash.
+Every external dependency (the embedding model, the chat model, the notification sender) is faked (`FakeEmbeddingModel`, `FakeChatModel`, `FakeNotificationSender`), so the suite runs with zero real API calls and no cost. Integration tests run against a real Postgres via Testcontainers, not an in-memory substitute, so the pgvector-specific SQL gets exercised too. Covers the correlation logic under real concurrency, the full lifecycle from alert to resolved postmortem end to end, the circuit breaker opening and closing under repeated failures, and the notification outbox surviving a mid-flight crash.
 
 Frontend build is checked with `npm run build`.
