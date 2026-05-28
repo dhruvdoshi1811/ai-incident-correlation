@@ -19,19 +19,12 @@ If Gemini is down, rate-limited, or times out, the analysis still finishes. It f
 
 When the engineer resolves the incident, they fill in a short structured postmortem: root cause category, impact, what happened, root cause detail, resolution steps, follow-up actions. That write-up gets embedded and stored the exact same way a seeded postmortem does. It isn't just a record for later. It becomes context the system can pull from the next time a similar incident happens. That's the point of the whole project: the answers get more specific as more incidents get resolved through it, without retraining anything.
 
-```mermaid
-flowchart LR
-    A[Ops triggers a scenario] --> B[Alerts fired]
-    B --> C[Alerts embedded and correlated]
-    C --> D[Incident created]
-    D --> E[On-call analyzes]
-    E --> F[Root cause + retrieved context shown]
-    F --> G[Notification queued and sent]
-    D --> H[On-call resolves]
-    H --> I[Postmortem written]
-    I --> J[Embedded into the knowledge base]
-    J -. feeds future analyses .-> E
-```
+1. Ops engineer triggers a scenario, alerts fire.
+2. Alerts get embedded and correlated into an incident.
+3. On-call engineer analyzes the incident and sees a root cause plus retrieved context.
+4. A notification gets queued and sent.
+5. On-call engineer resolves the incident and writes a postmortem.
+6. The postmortem gets embedded into the knowledge base, ready for the next analysis.
 
 ## Architecture
 
@@ -61,27 +54,21 @@ One exception to "just use JPA": vector embeddings never show up as a field on `
 
 Two separate flows: correlating alerts as they come in, and analyzing an incident once it exists.
 
-```mermaid
-flowchart TD
-    subgraph Correlation
-        A1[New alert] --> A2[Embed alert text]
-        A2 --> A3[Advisory lock + nearest-incident search]
-        A3 --> A4{Close enough?}
-        A4 -->|yes| A5[Attach to existing incident]
-        A4 -->|no| A6[Create new incident]
-    end
+**Correlating an alert:**
 
-    subgraph Analysis
-        B1[Analyze requested] --> B2[Embed alert summary]
-        B2 --> B3[Find top-K similar postmortems]
-        B3 --> B4[Build prompt: alerts + retrieved postmortems]
-        B4 --> B5[Circuit breaker + rate limiter + timeout]
-        B5 -->|call succeeds| B6[COMPLETED: root cause + retrieved context]
-        B5 -->|call fails| B7[DEGRADED: raw alerts fallback]
-        B6 --> B8[Notification queued]
-        B7 --> B8
-    end
-```
+1. A new alert arrives and gets embedded.
+2. An advisory lock is taken, then the nearest open incident is found by embedding distance.
+3. Close enough: attach to that incident. Not close enough: create a new one.
+
+**Analyzing an incident:**
+
+1. The incident's alerts get summarized and embedded.
+2. The top-K most similar postmortems are retrieved.
+3. A prompt is built from the alerts plus the retrieved postmortems.
+4. The call to Gemini goes through a circuit breaker, a rate limiter, and a timeout.
+5. If it succeeds: status `COMPLETED`, with a root cause and the retrieved postmortem titles recorded.
+6. If it fails: status `DEGRADED`, falling back to a summary of the raw alerts.
+7. Either way, a notification gets queued.
 
 A few notes on why it's built this way:
 
